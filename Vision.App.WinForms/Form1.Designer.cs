@@ -32,6 +32,9 @@ partial class Form1
         tableLayoutPanel1 = new TableLayoutPanel();
         drawingCanvas1 = new DrawingCanvas();
         rightPanel = new Panel();
+        lblFeedbackHint = new Label();
+        flowFeedbackButtons = new FlowLayoutPanel();
+        lblFeedbackStatus = new Label();
         btnClear = new Button();
         btnLoadModel = new Button();
         lblPred = new Label();
@@ -70,6 +73,9 @@ partial class Form1
         // rightPanel
         // 
         rightPanel.Controls.Add(picturePreview);
+        rightPanel.Controls.Add(lblFeedbackStatus);
+        rightPanel.Controls.Add(flowFeedbackButtons);
+        rightPanel.Controls.Add(lblFeedbackHint);
         rightPanel.Controls.Add(lblModel);
         rightPanel.Controls.Add(lblTop);
         rightPanel.Controls.Add(lblPred);
@@ -81,6 +87,35 @@ partial class Form1
         rightPanel.Name = "rightPanel";
         rightPanel.Size = new Size(278, 604);
         rightPanel.TabIndex = 1;
+
+        // 
+        // lblFeedbackHint
+        // 
+        lblFeedbackHint.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        lblFeedbackHint.Location = new Point(8, 330);
+        lblFeedbackHint.Name = "lblFeedbackHint";
+        lblFeedbackHint.Size = new Size(262, 36);
+        lblFeedbackHint.TabIndex = 5;
+        lblFeedbackHint.Text = "Если сеть ошиблась — нажмите правильную цифру:";
+
+        // 
+        // flowFeedbackButtons
+        // 
+        flowFeedbackButtons.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        flowFeedbackButtons.Location = new Point(8, 370);
+        flowFeedbackButtons.Name = "flowFeedbackButtons";
+        flowFeedbackButtons.Size = new Size(262, 76);
+        flowFeedbackButtons.TabIndex = 6;
+
+        // 
+        // lblFeedbackStatus
+        // 
+        lblFeedbackStatus.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        lblFeedbackStatus.Location = new Point(8, 450);
+        lblFeedbackStatus.Name = "lblFeedbackStatus";
+        lblFeedbackStatus.Size = new Size(262, 48);
+        lblFeedbackStatus.TabIndex = 7;
+        lblFeedbackStatus.Text = "";
         // 
         // btnClear
         // 
@@ -133,11 +168,11 @@ partial class Form1
         // picturePreview
         // 
         picturePreview.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-        picturePreview.Location = new Point(8, 340);
+        picturePreview.Location = new Point(8, 500);
         picturePreview.Name = "picturePreview";
-        picturePreview.Size = new Size(140, 140);
+        picturePreview.Size = new Size(140, 96);
         picturePreview.SizeMode = PictureBoxSizeMode.Zoom;
-        picturePreview.TabIndex = 5;
+        picturePreview.TabIndex = 8;
         picturePreview.TabStop = false;
         // 
         // Form1
@@ -164,5 +199,8 @@ partial class Form1
     private Label lblPred;
     private Label lblTop;
     private Label lblModel;
+    private Label lblFeedbackHint;
+    private FlowLayoutPanel flowFeedbackButtons;
+    private Label lblFeedbackStatus;
     private PictureBox picturePreview;
 }

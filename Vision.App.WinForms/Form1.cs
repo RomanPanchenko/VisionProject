@@ -1,8 +1,11 @@
 using Vision.NeuralEngine.Core;
 using Vision.NeuralEngine.IO;
 using Vision.NeuralEngine.Layers;
+using Vision.NeuralEngine.Losses;
 using Vision.NeuralEngine.Models;
+using Vision.NeuralEngine.Optimizers;
 using Vision.NeuralEngine.Random;
+using Vision.NeuralEngine.Training;
 
 namespace Vision.App.WinForms;
 
@@ -12,9 +15,16 @@ public partial class Form1 : Form
     private SequentialModel? _model;
     private string? _modelPath;
 
+    private readonly Button[] _feedbackButtons;
+
     public Form1()
     {
         InitializeComponent();
+
+        _feedbackButtons = CreateFeedbackButtons();
+        foreach (var b in _feedbackButtons)
+            flowFeedbackButtons.Controls.Add(b);
+        SetFeedbackEnabled(enabled: false);
 
         btnClear.Click += (_, _) =>
         {
@@ -39,6 +49,26 @@ public partial class Form1 : Form
         TryLoadDefaultModel();
         drawingCanvas1.Clear();
         UpdatePredictionUi(null);
+    }
+
+    private Button[] CreateFeedbackButtons()
+    {
+        var buttons = new Button[10];
+        for (var d = 0; d <= 9; d++)
+        {
+            var digit = d;
+            var btn = new Button
+            {
+                Text = digit.ToString(),
+                Width = 46,
+                Height = 32,
+                Margin = new Padding(3)
+            };
+            btn.Click += async (_, _) => await FineTuneOnCurrentDrawingAsync(digit);
+            buttons[digit] = btn;
+        }
+
+        return buttons;
     }
 
     private void TryLoadDefaultModel()
@@ -92,6 +122,9 @@ public partial class Form1 : Form
         _model = model;
         _modelPath = path;
         lblModel.Text = $"Модель: {Path.GetFileName(path)}";
+
+        SetFeedbackEnabled(enabled: true);
+        lblFeedbackStatus.Text = "";
     }
 
     private static SequentialModel BuildMnistModel()
@@ -132,6 +165,13 @@ public partial class Form1 : Form
         }
 
         var input = drawingCanvas1.CaptureAs28x28Hwc1();
+        if (IsBlankInput(input))
+        {
+            picturePreview.Image?.Dispose();
+            picturePreview.Image = null;
+            UpdatePredictionUi(null);
+            return;
+        }
         var logits = _model.Forward(input, training: false);
         var probs = Softmax(logits);
 
@@ -151,6 +191,111 @@ public partial class Form1 : Form
         picturePreview.Image = (Bitmap)preview.Clone();
 
         UpdatePredictionUi((pred, probs));
+    }
+
+    private void SetFeedbackEnabled(bool enabled)
+    {
+        flowFeedbackButtons.Enabled = enabled;
+        foreach (var b in _feedbackButtons)
+            b.Enabled = enabled;
+    }
+
+    private async Task FineTuneOnCurrentDrawingAsync(int correctLabel)
+    {
+        if (_model is null)
+        {
+            MessageBox.Show(this, "Сначала загрузите модель.", "Нет модели", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var input = drawingCanvas1.CaptureAs28x28Hwc1();
+        if (IsBlankInput(input))
+        {
+            lblFeedbackStatus.Text = "Нечего дообучать: холст пуст.";
+            return;
+        }
+
+        SetFeedbackEnabled(enabled: false);
+        btnClear.Enabled = false;
+        btnLoadModel.Enabled = false;
+        lblFeedbackStatus.Text = $"Дообучение на классе {correctLabel}...";
+
+        try
+        {
+            await Task.Run(() => FineTuneBlocking(_model, input, correctLabel));
+
+            var savePath = _modelPath;
+            if (string.IsNullOrWhiteSpace(savePath))
+            {
+                using var dialog = new SaveFileDialog
+                {
+                    Title = "Куда сохранить обновлённую модель (*.vnd)",
+                    Filter = "Vision Neural Data (*.vnd)|*.vnd|All files (*.*)|*.*",
+                    AddExtension = true,
+                    DefaultExt = "vnd"
+                };
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                {
+                    lblFeedbackStatus.Text = "Дообучено, но не сохранено (отменено пользователем).";
+                    return;
+                }
+
+                savePath = dialog.FileName;
+                _modelPath = savePath;
+                lblModel.Text = $"Модель: {Path.GetFileName(savePath)}";
+            }
+
+            ModelSerializer.SaveParameters(_model, savePath);
+            lblFeedbackStatus.Text = $"Готово: дообучено как {correctLabel} и сохранено.";
+
+            // Обновляем предсказание после изменения весов.
+            PredictNow();
+        }
+        catch (Exception ex)
+        {
+            lblFeedbackStatus.Text = "Ошибка дообучения.";
+            MessageBox.Show(this, ex.Message, "Ошибка дообучения", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            btnClear.Enabled = true;
+            btnLoadModel.Enabled = true;
+            SetFeedbackEnabled(enabled: true);
+        }
+    }
+
+    private static bool IsBlankInput(float[] input)
+    {
+        // На чёрном фоне все значения близки к 0. Если чернил нет — не обучаем.
+        var sum = 0f;
+        for (var i = 0; i < input.Length; i++)
+            sum += input[i];
+
+        return sum < 1e-3f;
+    }
+
+    private static void FineTuneBlocking(SequentialModel model, float[] input, int correctLabel)
+    {
+        var trainer = new Trainer();
+        var loss = new SoftmaxCrossEntropyLoss();
+        var optimizer = new SgdOptimizer(learningRate: 0.01f);
+
+        // Повторяем один и тот же пример много раз: получаем несколько SGD-шагов.
+        const int steps = 40;
+        var samples = new TrainingSample[steps];
+        for (var i = 0; i < steps; i++)
+        {
+            // Важно: Trainer не модифицирует sample.Input, можно шарить один и тот же массив.
+            samples[i] = new TrainingSample(input, correctLabel);
+        }
+
+        trainer.Train(
+            model,
+            samples,
+            loss,
+            optimizer,
+            new TrainingOptions { Epochs = 1, Shuffle = false },
+            shuffleRng: null);
     }
 
     private void UpdatePredictionUi((int Pred, float[] Probs)? result)
