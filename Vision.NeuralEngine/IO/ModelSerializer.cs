@@ -11,6 +11,72 @@ public static class ModelSerializer
     private const uint Magic = 0x31444E56; // 'V''N''D''1' (Vision Neural Data v1)
     private const int Version = 1;
 
+    public sealed record ModelFileSignature(int Version, int ParamCount, int[] Lengths);
+
+    public static bool TryReadSignature(string path, out ModelFileSignature signature, out string error)
+    {
+        signature = null!;
+        error = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            error = "Path is empty.";
+            return false;
+        }
+        if (!File.Exists(path))
+        {
+            error = $"Model file not found: '{path}'";
+            return false;
+        }
+
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var br = new BinaryReader(fs);
+
+            var magic = br.ReadUInt32();
+            if (magic != Magic)
+            {
+                error = $"Invalid model file magic: 0x{magic:X8}.";
+                return false;
+            }
+
+            var version = br.ReadInt32();
+            if (version != Version)
+            {
+                error = $"Unsupported model file version: {version} (expected {Version}).";
+                return false;
+            }
+
+            var paramCount = br.ReadInt32();
+            if (paramCount < 0)
+            {
+                error = "Invalid parameter count in file.";
+                return false;
+            }
+
+            var lengths = new int[paramCount];
+            for (var i = 0; i < paramCount; i++)
+            {
+                var len = br.ReadInt32();
+                if (len < 0)
+                {
+                    error = "Invalid parameter length in file.";
+                    return false;
+                }
+                lengths[i] = len;
+            }
+
+            signature = new ModelFileSignature(version, paramCount, lengths);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
     public static void SaveParameters(SequentialModel model, string path)
     {
         if (model is null) throw new ArgumentNullException(nameof(model));

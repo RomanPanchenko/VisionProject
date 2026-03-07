@@ -9,6 +9,7 @@
 *.suo
 *.DotSettings.user
 *.rsuser
+*.DotSettings.user
 
 # Test results / logs
 TestResults/

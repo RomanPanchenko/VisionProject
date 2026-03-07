@@ -1,6 +1,7 @@
 ﻿using Vision.NeuralEngine.Losses;
 using Vision.NeuralEngine.Models;
 using Vision.NeuralEngine.Optimizers;
+using System.Diagnostics;
 
 namespace Vision.NeuralEngine.Training;
 
@@ -23,6 +24,11 @@ public sealed class Trainer
 
         for (var epoch = 1; epoch <= options.Epochs; epoch++)
         {
+            if (options.ReportProgressToConsole)
+            {
+                Console.WriteLine($"Epoch {epoch}/{options.Epochs}");
+            }
+
             if (options.Shuffle)
             {
                 Shuffle(indices, rng);
@@ -30,6 +36,15 @@ public sealed class Trainer
 
             var totalLoss = 0f;
             var correct = 0;
+
+            var progressStep = options.ProgressPercentStep;
+            if (progressStep < 1) progressStep = 1;
+            if (progressStep > 100) progressStep = 100;
+            var lastPrintedPercentInt = -1;
+            var minReportInterval = options.ProgressMinReportInterval;
+            if (minReportInterval < TimeSpan.Zero) minReportInterval = TimeSpan.Zero;
+            var lastPrintedAt = TimeSpan.Zero;
+            var stopwatch = options.ReportProgressToConsole ? Stopwatch.StartNew() : null;
 
             for (var s = 0; s < indices.Length; s++)
             {
@@ -47,11 +62,33 @@ public sealed class Trainer
                 var dLogits = loss.Backward();
                 model.Backward(dLogits);
                 optimizer.Step(model.Parameters);
+
+                if (options.ReportProgressToConsole)
+                {
+                    var percentInt = (int)(((s + 1L) * 100L) / indices.Length);
+                    var percentPrecise = ((s + 1d) * 100d) / indices.Length;
+
+                    var timeOk = stopwatch is not null && (stopwatch.Elapsed - lastPrintedAt) >= minReportInterval;
+                    var stepOk = percentInt == 100 || (percentInt % progressStep == 0 && percentInt != lastPrintedPercentInt);
+                    var shouldPrint = timeOk || stepOk;
+                    if (shouldPrint)
+                    {
+                        Console.Write($"\r  {percentPrecise,6:F2}%");
+                        lastPrintedPercentInt = percentInt;
+                        if (stopwatch is not null) lastPrintedAt = stopwatch.Elapsed;
+                        if (percentInt == 100) Console.WriteLine();
+                    }
+                }
             }
 
             var avgLoss = totalLoss / samples.Count;
             var accuracy = correct / (float)samples.Count;
             metrics.Add(new TrainingMetrics(epoch, avgLoss, accuracy));
+
+            if (options.ReportProgressToConsole)
+            {
+                Console.WriteLine($"  loss={avgLoss:F4} acc={accuracy:P2}");
+            }
         }
 
         return metrics;

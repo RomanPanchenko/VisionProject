@@ -69,25 +69,45 @@ if (classCount is null || classCount <= 0)
         "либо указать --classCount <N>.");
 }
 
-// Модель: Conv(3x3, pad=1) -> ReLU -> Dense(10)
+// Модель:
+//   Conv(32,3x3,pad=1) -> ReLU -> Conv(64,3x3,pad=1) -> ReLU
+//   -> Dense(128) -> ReLU -> Dense(N)
 // Вход: 28x28x1, выход: N логитов классов.
 var rng = new SplitMix64Random(123);
-var conv = new Conv2DLayer(
+var conv1 = new Conv2DLayer(
     inputHeight: 28,
     inputWidth: 28,
     inputChannels: 1,
-    outputChannels: 8,
+    outputChannels: 32,
     kernelHeight: 3,
     kernelWidth: 3,
     stride: 1,
     padding: 1,
     rng: rng);
 
+var conv2 = new Conv2DLayer(
+    inputHeight: 28,
+    inputWidth: 28,
+    inputChannels: 32,
+    outputChannels: 64,
+    kernelHeight: 3,
+    kernelWidth: 3,
+    stride: 1,
+    padding: 1,
+    rng: rng);
+
+var dense1 = new DenseLayer(inputSize: conv2.OutputSize, outputSize: 128, rng: rng);
+var denseOut = new DenseLayer(inputSize: 128, outputSize: classCount.Value, rng: rng);
+
 var model = new SequentialModel(new ILayer[]
 {
-    conv,
+    conv1,
     new ReLULayer(),
-    new DenseLayer(inputSize: conv.OutputSize, outputSize: classCount.Value, rng: rng)
+    conv2,
+    new ReLULayer(),
+    dense1,
+    new ReLULayer(),
+    denseOut
 });
 
 if (!string.IsNullOrWhiteSpace(loadModelPath))
@@ -215,7 +235,7 @@ if (!string.IsNullOrWhiteSpace(predictDirPath))
 var loss = new SoftmaxCrossEntropyLoss();
 var optimizer = new SgdOptimizer(learningRate);
 var trainer = new Trainer();
-var options = new TrainingOptions { Epochs = epochs, Shuffle = true };
+var options = new TrainingOptions { Epochs = epochs, Shuffle = true, ReportProgressToConsole = true, ProgressPercentStep = 5 };
 
 if (epochs > 0)
 {

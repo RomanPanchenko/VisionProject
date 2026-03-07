@@ -99,15 +99,59 @@ public partial class Form1 : Form
             return;
         }
 
+        // При старте приложения лучше не показывать ошибку модального окна из-за старой/несовместимой модели.
+        // Если дефолтная модель не подходит по размерностям — просто не автозагружаем её.
+        if (!IsModelCompatibleWithAnyKnownFormat(defaultPath))
+        {
+            lblModel.Text = "Модель: (дефолтная модель несовместима — нажмите 'Загрузить модель...')";
+            return;
+        }
+
         try
         {
             LoadModel(defaultPath);
         }
-        catch (Exception ex)
+        catch
         {
-            lblModel.Text = "Модель: ошибка загрузки";
-            MessageBox.Show(this, ex.Message, "Ошибка загрузки модели", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            lblModel.Text = "Модель: (не удалось загрузить — нажмите 'Загрузить модель...')";
         }
+    }
+
+    private static bool IsModelCompatibleWithAnyKnownFormat(string modelPath)
+    {
+        if (!ModelSerializer.TryReadSignature(modelPath, out var sig, out _))
+            return false;
+
+        // 1) Если рядом лежит labels.json — проверяем под него.
+        var labels = TryLoadLabelsForModel(modelPath);
+        if (labels is { Length: > 0 })
+        {
+            if (IsSignatureCompatibleWithModel(sig, BuildMnistModel(classCount: labels.Length)))
+                return true;
+        }
+
+        // 2) Иначе пробуем наиболее частые варианты.
+        if (IsSignatureCompatibleWithModel(sig, BuildMnistModel(classCount: 36)))
+            return true;
+        if (IsSignatureCompatibleWithModel(sig, BuildMnistModel(classCount: 10)))
+            return true;
+
+        return false;
+    }
+
+    private static bool IsSignatureCompatibleWithModel(ModelSerializer.ModelFileSignature sig, SequentialModel model)
+    {
+        var parameters = model.Parameters;
+        if (sig.ParamCount != parameters.Count) return false;
+        if (sig.Lengths.Length != parameters.Count) return false;
+
+        for (var i = 0; i < parameters.Count; i++)
+        {
+            if (sig.Lengths[i] != parameters[i].Value.Length)
+                return false;
+        }
+
+        return true;
     }
 
     private void LoadModelViaDialog()
@@ -140,18 +184,20 @@ public partial class Form1 : Form
         if (_labels is { Length: > 0 })
         {
             _classCount = _labels.Length;
-            var model = BuildMnistModel(classCount: _classCount);
-            ModelSerializer.LoadParameters(model, path);
+
+            if (!VndModelLoader.TryLoadCompatible(path, classCount: _classCount, out var model, out _, out var error))
+                throw BuildModelLoadException(path, error);
+
             _model = model;
         }
         else
         {
             // Если labels рядом с моделью отсутствуют, пробуем сначала формат "digits+latin" (36 классов),
             // затем откатываемся к классическому MNIST (10 классов).
-            if (!TryLoadModelWithClassCount(path, classCount: 36, out var model))
+            if (!VndModelLoader.TryLoadCompatible(path, classCount: 36, out var model, out _, out _))
             {
-                if (!TryLoadModelWithClassCount(path, classCount: 10, out model))
-                    throw new InvalidOperationException("Не удалось загрузить модель: несовпадение размерностей.");
+                if (!VndModelLoader.TryLoadCompatible(path, classCount: 10, out model, out _, out var error))
+                    throw BuildModelLoadException(path, error);
             }
 
             _model = model;
@@ -168,19 +214,14 @@ public partial class Form1 : Form
         lblFeedbackStatus.Text = "";
     }
 
-    private static bool TryLoadModelWithClassCount(string path, int classCount, out SequentialModel model)
+    private static InvalidOperationException BuildModelLoadException(string path, Exception? error)
     {
-        model = BuildMnistModel(classCount: classCount);
-        try
-        {
-            ModelSerializer.LoadParameters(model, path);
-            return true;
-        }
-        catch
-        {
-            model = null!;
-            return false;
-        }
+        var details = error is null ? "" : $"\n\nДетали: {error.Message}";
+        return new InvalidOperationException(
+            "Не удалось загрузить модель: несовпадение архитектуры/размерностей. " +
+            "Выберите другой файл модели (*.vnd) или переобучите и сохраните модель заново." +
+            $"\nФайл: {Path.GetFileName(path)}" +
+            details);
     }
 
     private static string[] BuildDefaultDigitsLatinLabels()
@@ -193,26 +234,8 @@ public partial class Form1 : Form
 
     private static SequentialModel BuildMnistModel(int classCount)
     {
-        if (classCount <= 0) throw new ArgumentOutOfRangeException(nameof(classCount));
-
-        var rng = new SplitMix64Random(123);
-        var conv = new Conv2DLayer(
-            inputHeight: 28,
-            inputWidth: 28,
-            inputChannels: 1,
-            outputChannels: 8,
-            kernelHeight: 3,
-            kernelWidth: 3,
-            stride: 1,
-            padding: 1,
-            rng: rng);
-
-        return new SequentialModel(new ILayer[]
-        {
-            conv,
-            new ReLULayer(),
-            new DenseLayer(inputSize: conv.OutputSize, outputSize: classCount, rng: rng)
-        });
+        // Оставлено для обратной совместимости (старый код может вызывать этот метод).
+        return MnistModelVariants.BuildConv32_64_Dense128(classCount);
     }
 
     private void SchedulePredict()
