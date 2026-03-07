@@ -215,6 +215,8 @@ public partial class Form1 : Form
             return;
         }
 
+        TrySaveCurrentDrawingToDataset(correctLabel);
+
         SetFeedbackEnabled(enabled: false);
         btnClear.Enabled = false;
         btnLoadModel.Enabled = false;
@@ -261,6 +263,23 @@ public partial class Form1 : Form
             btnClear.Enabled = true;
             btnLoadModel.Enabled = true;
             SetFeedbackEnabled(enabled: true);
+        }
+    }
+
+    private void TrySaveCurrentDrawingToDataset(int correctLabel)
+    {
+        try
+        {
+            var repoRoot = RepoRootLocator.FindRepoRootOrNull(AppContext.BaseDirectory);
+            if (string.IsNullOrWhiteSpace(repoRoot)) return;
+
+            var datasetRoot = Path.Combine(repoRoot, "datasets", "mnist-pngs", "train");
+            using var preview = drawingCanvas1.CapturePreview28x28();
+            LabeledSampleWriter.Save28x28Png(preview, correctLabel, datasetRoot);
+        }
+        catch
+        {
+            // Сохранение примера — побочный эффект. Не мешаем дообучению, если не получилось записать файл.
         }
     }
 
