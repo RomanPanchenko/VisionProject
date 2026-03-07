@@ -15,6 +15,9 @@ public partial class Form1 : Form
     private SequentialModel? _model;
     private string? _modelPath;
 
+    private string[]? _labels;
+    private int _classCount = 10;
+
     private readonly Button[] _feedbackButtons;
 
     public Form1()
@@ -53,28 +56,44 @@ public partial class Form1 : Form
 
     private Button[] CreateFeedbackButtons()
     {
-        var buttons = new Button[10];
+        var buttons = new List<Button>(capacity: 40);
+
+        // 0..9
         for (var d = 0; d <= 9; d++)
+            buttons.Add(CreateFeedbackButton(d.ToString(), labelIndex: d));
+
+        // A..Z (по умолчанию индексация как в trainer: 0..9 затем A..Z)
+        for (var i = 0; i < 26; i++)
         {
-            var digit = d;
-            var btn = new Button
-            {
-                Text = digit.ToString(),
-                Width = 46,
-                Height = 32,
-                Margin = new Padding(3)
-            };
-            btn.Click += async (_, _) => await FineTuneOnCurrentDrawingAsync(digit);
-            buttons[digit] = btn;
+            var ch = (char)('A' + i);
+            buttons.Add(CreateFeedbackButton(ch.ToString(), labelIndex: 10 + i));
         }
 
-        return buttons;
+        return buttons.ToArray();
+    }
+
+    private Button CreateFeedbackButton(string text, int labelIndex)
+    {
+        var btn = new Button
+        {
+            Text = text,
+            Width = 46,
+            Height = 32,
+            Margin = new Padding(3),
+            Tag = labelIndex
+        };
+        btn.Click += async (_, _) => await FineTuneOnCurrentDrawingAsync(labelIndex);
+        return btn;
     }
 
     private void TryLoadDefaultModel()
     {
-        var defaultPath = Path.Combine(@"C:\Users\roman\RiderProjects\VisionProject", "models", "mnist_conv_relu_dense.vnd");
-        if (!File.Exists(defaultPath))
+        var repoRoot = RepoRootLocator.FindRepoRootOrNull(AppContext.BaseDirectory);
+        var defaultPath = repoRoot is null
+            ? null
+            : Path.Combine(repoRoot, "models", "mnist_conv_relu_dense.vnd");
+
+        if (string.IsNullOrWhiteSpace(defaultPath) || !File.Exists(defaultPath))
         {
             lblModel.Text = "Модель: (не найдена, нажмите 'Загрузить модель...')";
             return;
@@ -116,10 +135,32 @@ public partial class Form1 : Form
 
     private void LoadModel(string path)
     {
-        var model = BuildMnistModel();
-        ModelSerializer.LoadParameters(model, path);
+        _labels = TryLoadLabelsForModel(path);
 
-        _model = model;
+        if (_labels is { Length: > 0 })
+        {
+            _classCount = _labels.Length;
+            var model = BuildMnistModel(classCount: _classCount);
+            ModelSerializer.LoadParameters(model, path);
+            _model = model;
+        }
+        else
+        {
+            // Если labels рядом с моделью отсутствуют, пробуем сначала формат "digits+latin" (36 классов),
+            // затем откатываемся к классическому MNIST (10 классов).
+            if (!TryLoadModelWithClassCount(path, classCount: 36, out var model))
+            {
+                if (!TryLoadModelWithClassCount(path, classCount: 10, out model))
+                    throw new InvalidOperationException("Не удалось загрузить модель: несовпадение размерностей.");
+            }
+
+            _model = model;
+            _classCount = model.Layers.Count > 0 && model.Layers[^1] is DenseLayer dense
+                ? dense.Bias.Value.Length
+                : 10;
+            _labels = _classCount == 36 ? BuildDefaultDigitsLatinLabels() : null;
+        }
+
         _modelPath = path;
         lblModel.Text = $"Модель: {Path.GetFileName(path)}";
 
@@ -127,8 +168,33 @@ public partial class Form1 : Form
         lblFeedbackStatus.Text = "";
     }
 
-    private static SequentialModel BuildMnistModel()
+    private static bool TryLoadModelWithClassCount(string path, int classCount, out SequentialModel model)
     {
+        model = BuildMnistModel(classCount: classCount);
+        try
+        {
+            ModelSerializer.LoadParameters(model, path);
+            return true;
+        }
+        catch
+        {
+            model = null!;
+            return false;
+        }
+    }
+
+    private static string[] BuildDefaultDigitsLatinLabels()
+    {
+        var labels = new List<string>(capacity: 36);
+        for (var d = 0; d <= 9; d++) labels.Add(d.ToString());
+        for (var i = 0; i < 26; i++) labels.Add(((char)('A' + i)).ToString());
+        return labels.ToArray();
+    }
+
+    private static SequentialModel BuildMnistModel(int classCount)
+    {
+        if (classCount <= 0) throw new ArgumentOutOfRangeException(nameof(classCount));
+
         var rng = new SplitMix64Random(123);
         var conv = new Conv2DLayer(
             inputHeight: 28,
@@ -145,7 +211,7 @@ public partial class Form1 : Form
         {
             conv,
             new ReLULayer(),
-            new DenseLayer(inputSize: conv.OutputSize, outputSize: 10, rng: rng)
+            new DenseLayer(inputSize: conv.OutputSize, outputSize: classCount, rng: rng)
         });
     }
 
@@ -195,9 +261,11 @@ public partial class Form1 : Form
 
     private void SetFeedbackEnabled(bool enabled)
     {
-        flowFeedbackButtons.Enabled = enabled;
         foreach (var b in _feedbackButtons)
-            b.Enabled = enabled;
+        {
+            var idx = b.Tag is int i ? i : -1;
+            b.Enabled = enabled && idx >= 0 && idx < _classCount;
+        }
     }
 
     private async Task FineTuneOnCurrentDrawingAsync(int correctLabel)
@@ -220,7 +288,7 @@ public partial class Form1 : Form
         SetFeedbackEnabled(enabled: false);
         btnClear.Enabled = false;
         btnLoadModel.Enabled = false;
-        lblFeedbackStatus.Text = $"Дообучение на классе {correctLabel}...";
+        lblFeedbackStatus.Text = $"Дообучение на классе {FormatLabel(correctLabel, _labels)}...";
 
         try
         {
@@ -248,7 +316,12 @@ public partial class Form1 : Form
             }
 
             ModelSerializer.SaveParameters(_model, savePath);
-            lblFeedbackStatus.Text = $"Готово: дообучено как {correctLabel} и сохранено.";
+
+            // Сохраняем labels рядом с моделью, чтобы можно было корректно интерпретировать индексы.
+            if (_labels is { Length: > 0 })
+                TrySaveLabelsForModel(savePath, _labels);
+
+            lblFeedbackStatus.Text = $"Готово: дообучено как {FormatLabel(correctLabel, _labels)} и сохранено.";
 
             // Обновляем предсказание после изменения весов.
             PredictNow();
@@ -273,9 +346,9 @@ public partial class Form1 : Form
             var repoRoot = RepoRootLocator.FindRepoRootOrNull(AppContext.BaseDirectory);
             if (string.IsNullOrWhiteSpace(repoRoot)) return;
 
-            var datasetRoot = Path.Combine(repoRoot, "datasets", "mnist-pngs", "train");
+            var (datasetRoot, className) = MapLabelToDataset(repoRoot, correctLabel, _labels);
             using var preview = drawingCanvas1.CapturePreview28x28();
-            LabeledSampleWriter.Save28x28Png(preview, correctLabel, datasetRoot);
+            LabeledSampleWriter.Save28x28Png(preview, className, datasetRoot);
         }
         catch
         {
@@ -327,7 +400,7 @@ public partial class Form1 : Form
         }
 
         var (pred, probs) = result.Value;
-        lblPred.Text = $"Предсказание: {pred}";
+        lblPred.Text = $"Предсказание: {FormatLabel(pred, _labels)}";
 
         var top = Enumerable.Range(0, probs.Length)
             .Select(i => (Class: i, P: probs[i]))
@@ -335,7 +408,62 @@ public partial class Form1 : Form
             .Take(3)
             .ToArray();
 
-        lblTop.Text = "top-3:\r\n" + string.Join("\r\n", top.Select(t => $"{t.Class}: {t.P:P2}"));
+        lblTop.Text = "top-3:\r\n" + string.Join("\r\n", top.Select(t => $"{FormatLabel(t.Class, _labels)}: {t.P:P2}"));
+    }
+
+    private static string FormatLabel(int index, IReadOnlyList<string>? labels)
+    {
+        if (labels is null || index < 0 || index >= labels.Count)
+            return index.ToString();
+        return $"{index}('{labels[index]}')";
+    }
+
+    private static string[]? TryLoadLabelsForModel(string modelPath)
+    {
+        try
+        {
+            var sidecar = modelPath + ".labels.json";
+            if (!File.Exists(sidecar)) return null;
+
+            var json = File.ReadAllText(sidecar);
+            var labels = System.Text.Json.JsonSerializer.Deserialize<string[]>(json);
+            return labels is { Length: > 0 } ? labels : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void TrySaveLabelsForModel(string modelPath, IReadOnlyList<string> labels)
+    {
+        try
+        {
+            var sidecar = modelPath + ".labels.json";
+            var dir = Path.GetDirectoryName(sidecar);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            var json = System.Text.Json.JsonSerializer.Serialize(labels, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(sidecar, json);
+        }
+        catch
+        {
+            // Sidecar — удобство. Ошибка записи не должна ломать дообучение/сохранение модели.
+        }
+    }
+
+    private static (string DatasetRoot, string ClassName) MapLabelToDataset(string repoRoot, int labelIndex, IReadOnlyList<string>? labels)
+    {
+        // Если labels известны — используем их для выбора папки класса.
+        if (labels is { Count: > 0 } && labelIndex >= 0 && labelIndex < labels.Count)
+        {
+            var className = labels[labelIndex];
+            var isDigit = int.TryParse(className, out var d) && d is >= 0 and <= 9;
+            var dataset = isDigit ? "mnist-digits" : "mnist-latin";
+            return (Path.Combine(repoRoot, "datasets", dataset, "train"), className);
+        }
+
+        // Фоллбэк: старая логика (только цифры).
+        return (Path.Combine(repoRoot, "datasets", "mnist-digits", "train"), labelIndex.ToString());
     }
 
     private static float[] Softmax(float[] logits)

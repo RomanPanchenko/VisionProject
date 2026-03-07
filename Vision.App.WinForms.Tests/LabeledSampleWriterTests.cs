@@ -37,4 +37,32 @@ public class LabeledSampleWriterTests
                 Directory.Delete(root, recursive: true);
         }
     }
+
+    [Fact]
+    public void Save28x28Png_ByClassName_CreatesFileInCorrectFolder()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VisionProject_Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            using var bmp = new Bitmap(28, 28, PixelFormat.Format24bppRgb);
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.Black);
+                g.FillRectangle(Brushes.White, 10, 10, 8, 8);
+            }
+
+            var p = LabeledSampleWriter.Save28x28Png(bmp, className: "A", datasetRootDir: root);
+
+            Assert.True(File.Exists(p), $"Expected file to exist: {p}");
+            var expectedDir = Path.Combine(root, "A");
+            Assert.Equal(expectedDir, Path.GetDirectoryName(p));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
 }

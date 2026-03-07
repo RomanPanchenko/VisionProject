@@ -58,7 +58,7 @@ partial class Form1
         tableLayoutPanel1.Name = "tableLayoutPanel1";
         tableLayoutPanel1.RowCount = 1;
         tableLayoutPanel1.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        tableLayoutPanel1.Size = new Size(980, 620);
+        tableLayoutPanel1.Size = new Size(1100, 760);
         tableLayoutPanel1.TabIndex = 0;
         // 
         // drawingCanvas1
@@ -67,7 +67,7 @@ partial class Form1
         drawingCanvas1.Location = new Point(8, 8);
         drawingCanvas1.Margin = new Padding(8);
         drawingCanvas1.Name = "drawingCanvas1";
-        drawingCanvas1.Size = new Size(670, 604);
+        drawingCanvas1.Size = new Size(754, 744);
         drawingCanvas1.TabIndex = 0;
         // 
         // rightPanel
@@ -85,7 +85,7 @@ partial class Form1
         rightPanel.Location = new Point(694, 8);
         rightPanel.Margin = new Padding(8);
         rightPanel.Name = "rightPanel";
-        rightPanel.Size = new Size(278, 604);
+        rightPanel.Size = new Size(322, 744);
         rightPanel.TabIndex = 1;
 
         // 
@@ -96,22 +96,23 @@ partial class Form1
         lblFeedbackHint.Name = "lblFeedbackHint";
         lblFeedbackHint.Size = new Size(262, 36);
         lblFeedbackHint.TabIndex = 5;
-        lblFeedbackHint.Text = "Если сеть ошиблась — нажмите правильную цифру:";
+        lblFeedbackHint.Text = "Если сеть ошиблась — нажмите правильный класс (цифра или буква):";
 
         // 
         // flowFeedbackButtons
         // 
-        flowFeedbackButtons.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        flowFeedbackButtons.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+        flowFeedbackButtons.AutoScroll = true;
         flowFeedbackButtons.Location = new Point(8, 370);
         flowFeedbackButtons.Name = "flowFeedbackButtons";
-        flowFeedbackButtons.Size = new Size(262, 76);
+        flowFeedbackButtons.Size = new Size(306, 260);
         flowFeedbackButtons.TabIndex = 6;
 
         // 
         // lblFeedbackStatus
         // 
         lblFeedbackStatus.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-        lblFeedbackStatus.Location = new Point(8, 450);
+        lblFeedbackStatus.Location = new Point(8, 696);
         lblFeedbackStatus.Name = "lblFeedbackStatus";
         lblFeedbackStatus.Size = new Size(262, 48);
         lblFeedbackStatus.TabIndex = 7;
@@ -167,10 +168,10 @@ partial class Form1
         // 
         // picturePreview
         // 
-        picturePreview.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-        picturePreview.Location = new Point(8, 500);
+        picturePreview.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        picturePreview.Location = new Point(8, 640);
         picturePreview.Name = "picturePreview";
-        picturePreview.Size = new Size(140, 96);
+        picturePreview.Size = new Size(306, 48);
         picturePreview.SizeMode = PictureBoxSizeMode.Zoom;
         picturePreview.TabIndex = 8;
         picturePreview.TabStop = false;
@@ -178,9 +179,9 @@ partial class Form1
         // Form1
         // 
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(980, 620);
+        ClientSize = new Size(1100, 760);
         Controls.Add(tableLayoutPanel1);
-        MinimumSize = new Size(700, 450);
+        MinimumSize = new Size(820, 560);
         Name = "Form1";
         Text = "Vision MNIST Draw";
         tableLayoutPanel1.ResumeLayout(false);

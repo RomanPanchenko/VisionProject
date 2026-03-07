@@ -8,9 +8,17 @@ using Vision.NeuralEngine.Training;
 using Vision.NeuralEngine.IO;
 using Vision.Trainer;
 
-var dataRoot = GetArgValue(args, "--dataRoot") ?? Path.Combine("datasets", "mnist-pngs");
-var trainDir = Path.Combine(dataRoot, "train");
-var testDir = Path.Combine(dataRoot, "test");
+var dataRoot = GetArgValue(args, "--dataRoot");
+var extraDataRoots = GetArgValues(args, "--extraDataRoot");
+var classCountArg = GetArgValueInt(args, "--classCount");
+
+// По умолчанию обучаемся на цифрах + латинице (без кириллицы, чтобы не смешивать похожие символы).
+var datasetRoots = BuildDefaultDatasetRoots(dataRoot, extraDataRoots);
+
+// Для совместимости со старым выводом (train/test dirs).
+var primaryRoot = !string.IsNullOrWhiteSpace(dataRoot) ? dataRoot : datasetRoots[0];
+var trainDir = Path.Combine(primaryRoot, "train");
+var testDir = Path.Combine(primaryRoot, "test");
 
 var trainLimit = GetArgValueInt(args, "--trainLimit") ?? 5_000;
 var testLimit = GetArgValueInt(args, "--testLimit") ?? 1_000;
@@ -26,20 +34,43 @@ var diagnosePredict = HasFlag(args, "--diagnosePredict");
 var predictRecursive = HasFlag(args, "--predictRecursive");
 var predictLimit = GetArgValueInt(args, "--predictLimit");
 
-Console.WriteLine($"Data root: {Path.GetFullPath(dataRoot)}");
+Console.WriteLine($"Data root: {Path.GetFullPath(primaryRoot)}");
 Console.WriteLine($"Train dir: {Path.GetFullPath(trainDir)} (limit={trainLimit})");
 Console.WriteLine($"Test dir:  {Path.GetFullPath(testDir)} (limit={testLimit})");
 
+Console.WriteLine("Datasets:");
+foreach (var r in datasetRoots)
+    Console.WriteLine($"  - {Path.GetFullPath(r)}");
+
 List<TrainingSample>? trainSamples = null;
 List<TrainingSample>? testSamples = null;
+string[]? labels = null;
 if (string.IsNullOrWhiteSpace(predictPngPath) && string.IsNullOrWhiteSpace(predictDirPath))
 {
-    trainSamples = MnistPngDataset.Load(trainDir, maxSamples: trainLimit);
-    testSamples = MnistPngDataset.Load(testDir, maxSamples: testLimit);
+    labels = PngClassificationDataset.BuildLabels(datasetRoots);
+
+    trainSamples = PngClassificationDataset.LoadMany(datasetRoots, split: "train", labels, maxSamples: trainLimit).Samples;
+    testSamples = PngClassificationDataset.LoadMany(datasetRoots, split: "test", labels, maxSamples: testLimit).Samples;
+}
+else
+{
+    // Для предикта нам нужны имена классов, чтобы красиво печатать результаты.
+    // Если sidecar нет — просто работаем с индексацией 0..N-1.
+    if (!string.IsNullOrWhiteSpace(loadModelPath))
+        labels = PngClassificationDataset.TryLoadLabelsForModel(loadModelPath);
+}
+
+var classCount = classCountArg ?? labels?.Length;
+if (classCount is null || classCount <= 0)
+{
+    throw new InvalidOperationException(
+        "Не удалось определить число классов. " +
+        "Для обучения оно берётся из датасетов, для предикта нужно либо наличие sidecar '*.labels.json', " +
+        "либо указать --classCount <N>.");
 }
 
 // Модель: Conv(3x3, pad=1) -> ReLU -> Dense(10)
-// Вход: 28x28x1, выход: 10 логитов классов.
+// Вход: 28x28x1, выход: N логитов классов.
 var rng = new SplitMix64Random(123);
 var conv = new Conv2DLayer(
     inputHeight: 28,
@@ -56,7 +87,7 @@ var model = new SequentialModel(new ILayer[]
 {
     conv,
     new ReLULayer(),
-    new DenseLayer(inputSize: conv.OutputSize, outputSize: 10, rng: rng)
+    new DenseLayer(inputSize: conv.OutputSize, outputSize: classCount.Value, rng: rng)
 });
 
 if (!string.IsNullOrWhiteSpace(loadModelPath))
@@ -75,11 +106,11 @@ if (!string.IsNullOrWhiteSpace(predictPngPath))
     var fullPngPath = Path.GetFullPath(predictPngPath);
     Console.WriteLine($"\nPredicting PNG: {fullPngPath}");
 
-    int? expectedLabel = TryInferExpectedLabelFromPath(fullPngPath);
+    var expectedLabel = TryInferExpectedLabelFromPath(fullPngPath, labels);
     if (expectedLabel.HasValue)
-        Console.WriteLine($"Expected label (from parent dir): {expectedLabel.Value}");
+        Console.WriteLine($"Expected label (from parent dir): {FormatLabel(expectedLabel.Value, labels)}");
 
-    var input = MnistPngDataset.LoadPngAs28x28Hwc1(fullPngPath);
+    var input = PngClassificationDataset.LoadPngAs28x28Hwc1(fullPngPath);
 
     if (diagnosePredict)
     {
@@ -100,14 +131,15 @@ if (!string.IsNullOrWhiteSpace(predictPngPath))
         }
     }
 
-    Console.WriteLine($"Prediction: {pred} (p={bestP:F4})");
+    Console.WriteLine($"Prediction: {FormatLabel(pred, labels)} (p={bestP:F4})");
 
-    var k = Math.Clamp(topK, 1, 10);
+    var probsClassCount = probs.Length;
+    var k = Math.Clamp(topK, 1, probsClassCount);
     var top = Enumerable.Range(0, probs.Length)
         .Select(c => (Class: c, P: probs[c]))
         .OrderByDescending(t => t.P)
         .Take(k);
-    Console.WriteLine("Top: " + string.Join(", ", top.Select(t => $"{t.Class}:{t.P:F4}")));
+    Console.WriteLine("Top: " + string.Join(", ", top.Select(t => $"{FormatLabel(t.Class, labels)}:{t.P:F4}")));
 
     if (expectedLabel.HasValue)
     {
@@ -136,15 +168,18 @@ if (!string.IsNullOrWhiteSpace(predictDirPath))
 
     var total = 0;
     var correct = 0;
-    var perLabelTotal = new int[10];
-    var perLabelCorrect = new int[10];
+    var cc = classCount.Value;
+    var perLabelTotal = new int[cc];
+    var perLabelCorrect = new int[cc];
 
     foreach (var file in files)
     {
-        var expected = TryInferExpectedLabelFromPath(file);
+        var expected = TryInferExpectedLabelFromPath(file, labels);
         if (!expected.HasValue) continue;
 
-        var input = MnistPngDataset.LoadPngAs28x28Hwc1(file);
+        if ((uint)expected.Value >= (uint)cc) continue;
+
+        var input = PngClassificationDataset.LoadPngAs28x28Hwc1(file);
         var pred = model.PredictClass(input);
 
         total++;
@@ -161,17 +196,17 @@ if (!string.IsNullOrWhiteSpace(predictDirPath))
 
     if (total == 0)
     {
-        Console.WriteLine("No labeled PNGs found (expected parent dir name to be 0..9).");
+        Console.WriteLine("No labeled PNGs found (expected parent dir name to match known labels).");
         return;
     }
 
     Console.WriteLine($"Accuracy: {correct}/{total} = {(correct / (float)total):P2}");
     Console.WriteLine("Per-label accuracy:");
-    for (var label = 0; label <= 9; label++)
+    for (var label = 0; label < cc; label++)
     {
         if (perLabelTotal[label] == 0) continue;
         var acc = perLabelCorrect[label] / (float)perLabelTotal[label];
-        Console.WriteLine($"  {label}: {perLabelCorrect[label]}/{perLabelTotal[label]} = {acc:P2}");
+        Console.WriteLine($"  {FormatLabel(label, labels)}: {perLabelCorrect[label]}/{perLabelTotal[label]} = {acc:P2}");
     }
 
     return;
@@ -202,13 +237,19 @@ Console.WriteLine($"Test accuracy: {testAcc:P2}");
 if (printProbs > 0)
 {
     Console.WriteLine($"\nPredictions (first {printProbs} samples, topK={topK}):");
-    PrintPredictionsWithProbabilities(model, testSamples!, limit: printProbs, topK: topK);
+    PrintPredictionsWithProbabilities(model, testSamples!, labels, limit: printProbs, topK: topK);
 }
 
 if (!string.IsNullOrWhiteSpace(saveModelPath))
 {
     Console.WriteLine($"Saving model parameters to: {Path.GetFullPath(saveModelPath)}");
     ModelSerializer.SaveParameters(model, saveModelPath);
+
+    if (labels is { Length: > 0 })
+    {
+        PngClassificationDataset.SaveLabels(saveModelPath, labels);
+        Console.WriteLine($"Saved labels to: {Path.GetFullPath(PngClassificationDataset.GetLabelsSidecarPath(saveModelPath))}");
+    }
 }
 
 static float EvaluateAccuracy(SequentialModel model, IReadOnlyList<TrainingSample> samples)
@@ -227,6 +268,7 @@ static float EvaluateAccuracy(SequentialModel model, IReadOnlyList<TrainingSampl
 static void PrintPredictionsWithProbabilities(
     SequentialModel model,
     IReadOnlyList<TrainingSample> samples,
+    IReadOnlyList<string>? labels,
     int limit,
     int topK)
 {
@@ -259,7 +301,7 @@ static void PrintPredictionsWithProbabilities(
             .Select(c => (Class: c, P: probs[c]))
             .OrderByDescending(t => t.P)
             .Take(topK);
-        Console.WriteLine("    top: " + string.Join(", ", top.Select(t => $"{t.Class}:{t.P:F4}")));
+        Console.WriteLine("    top: " + string.Join(", ", top.Select(t => $"{FormatLabel(t.Class, labels)}:{t.P:F4}")));
     }
 }
 
@@ -306,6 +348,22 @@ static string? GetArgValue(string[] args, string key)
     return null;
 }
 
+static string[] GetArgValues(string[] args, string key)
+{
+    var values = new List<string>();
+    for (var i = 0; i < args.Length - 1; i++)
+    {
+        if (string.Equals(args[i], key, StringComparison.OrdinalIgnoreCase))
+        {
+            var v = args[i + 1];
+            if (!string.IsNullOrWhiteSpace(v))
+                values.Add(v);
+        }
+    }
+
+    return values.ToArray();
+}
+
 static int? GetArgValueInt(string[] args, string key)
 {
     var v = GetArgValue(args, key);
@@ -329,7 +387,7 @@ static bool HasFlag(string[] args, string key)
     return false;
 }
 
-static int? TryInferExpectedLabelFromPath(string path)
+static int? TryInferExpectedLabelFromPath(string path, IReadOnlyList<string>? labels)
 {
     try
     {
@@ -337,12 +395,52 @@ static int? TryInferExpectedLabelFromPath(string path)
         if (string.IsNullOrWhiteSpace(dir)) return null;
 
         var parentName = new DirectoryInfo(dir).Name;
-        return int.TryParse(parentName, out var label) && label is >= 0 and <= 9 ? label : null;
+
+        if (labels is null || labels.Count == 0)
+        {
+            // Фоллбэк для старого MNIST формата.
+            return int.TryParse(parentName, out var d) && d is >= 0 and <= 9 ? d : null;
+        }
+
+        for (var i = 0; i < labels.Count; i++)
+        {
+            if (string.Equals(labels[i], parentName, StringComparison.OrdinalIgnoreCase))
+                return i;
+        }
+
+        return null;
     }
     catch
     {
         return null;
     }
+}
+
+static string FormatLabel(int index, IReadOnlyList<string>? labels)
+{
+    if (labels is null || index < 0 || index >= labels.Count)
+        return index.ToString();
+    return $"{index}('{labels[index]}')";
+}
+
+static string[] BuildDefaultDatasetRoots(string? dataRootArg, string[] extraDataRoots)
+{
+    if (!string.IsNullOrWhiteSpace(dataRootArg))
+    {
+        // Совместимость: если явно указан --dataRoot, используем его как единственный датасет.
+        // Доп. датасеты всё равно можно подключить через --extraDataRoot.
+        return new[] { dataRootArg }
+            .Concat(extraDataRoots)
+            .ToArray();
+    }
+
+    return new[]
+        {
+            Path.Combine("datasets", "mnist-digits"),
+            Path.Combine("datasets", "mnist-latin")
+        }
+        .Concat(extraDataRoots)
+        .ToArray();
 }
 
 static void PrintInputStats(float[] input)
