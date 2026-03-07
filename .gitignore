@@ -2,5 +2,19 @@
 **/bin/
 **/obj/
 **/.idea/
+
+# Rider / Visual Studio user-specific files
+.vs/
+*.user
+*.suo
+*.DotSettings.user
+*.rsuser
+
+# Test results / logs
+TestResults/
+*.log
+
+# Local artifacts
 models/
 mnist-pngs/
+datasets/
