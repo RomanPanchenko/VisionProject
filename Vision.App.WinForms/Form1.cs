@@ -77,7 +77,11 @@ public partial class Form1 : Form
         var btn = new Button
         {
             Text = text,
-            Width = 46,
+            // В правой панели `flowFeedbackButtons` имеет ширину ~306px.
+            // При Width=46 и Margin=3 получается 5 кнопок в ряд и последняя (обычно `Z`) уезжает
+            // в отдельную строку вниз, из-за чего кажется что "кнопки Z нет".
+            // Width=45 позволяет уместить 6 кнопок в ряд (45 + 2*3 = 51; 6*51 = 306).
+            Width = 45,
             Height = 32,
             Margin = new Padding(3),
             Tag = labelIndex

@@ -179,7 +179,7 @@ partial class Form1
         // Form1
         // 
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(1100, 760);
+        ClientSize = new Size(1200, 790);
         Controls.Add(tableLayoutPanel1);
         MinimumSize = new Size(820, 560);
         Name = "Form1";

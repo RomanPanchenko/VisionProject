@@ -70,8 +70,10 @@ if (classCount is null || classCount <= 0)
 }
 
 // Модель:
-//   Conv(32,3x3,pad=1) -> ReLU -> Conv(64,3x3,pad=1) -> ReLU
-//   -> Dense(128) -> ReLU -> Dense(N)
+//   Conv(32,3x3,pad=1) -> ReLU
+//   -> Conv(64,3x3,pad=1) -> ReLU
+//   -> Dense(128) -> ReLU
+//   -> Dense(N)
 // Вход: 28x28x1, выход: N логитов классов.
 var rng = new SplitMix64Random(123);
 var conv1 = new Conv2DLayer(
